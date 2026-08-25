@@ -236,32 +236,8 @@ VPN_IP=$(ip netns exec "$NS" curl -4 -fsS --max-time 20 https://api.ipify.org ||
 [[ -n "$VPN_IP" ]] || die "AmneziaWG started, but the VPN public-IP test failed; Codex was not installed"
 echo "AmneziaWG is active. VPN exit IP: $VPN_IP"
 
-find_real_codex() {
-    local candidate current
-
-    current=$(command -v codex 2>/dev/null || true)
-    if [[ "$current" == "/usr/local/bin/codex" ]] && \
-       grep -q 'Managed by amnezia-codex-cli' "$current" 2>/dev/null; then
-        current=""
-        if [[ -s "${CONFIG_DIR}/real-codex-path" ]]; then
-            candidate=$(head -n1 "${CONFIG_DIR}/real-codex-path")
-            [[ -x "$candidate" ]] && current="$candidate"
-        fi
-    fi
-
-    for candidate in "$current" "$CODEX_INSTALL_DIR/codex" /root/.local/bin/codex; do
-        if [[ -n "$candidate" && -x "$candidate" ]] && \
-           ! grep -q 'Managed by amnezia-codex-cli' "$candidate" 2>/dev/null; then
-            readlink -f "$candidate"
-            return 0
-        fi
-    done
-    return 1
-}
-
-REAL_CODEX=$(find_real_codex || true)
-if [[ -z "$REAL_CODEX" ]]; then
-    echo "Codex CLI is not installed. Installing it through the AmneziaWG namespace."
+if [[ ! -x "$CODEX_INSTALL_DIR/codex" ]]; then
+    echo "Installing the managed Codex CLI copy through the AmneziaWG namespace."
     install -d -m 755 "$CODEX_INSTALL_DIR"
     ip netns exec "$NS" env \
         HOME=/root \
@@ -269,8 +245,8 @@ if [[ -z "$REAL_CODEX" ]]; then
         CODEX_INSTALL_DIR="$CODEX_INSTALL_DIR" \
         CODEX_NON_INTERACTIVE=1 \
         sh -c "curl -fsSL --max-time 60 '$CODEX_INSTALLER_URL' | sh"
-    REAL_CODEX=$(find_real_codex || true)
 fi
+REAL_CODEX=$(readlink -f "$CODEX_INSTALL_DIR/codex" 2>/dev/null || true)
 [[ -n "$REAL_CODEX" && -x "$REAL_CODEX" ]] || \
     die "Codex installation finished without an executable Codex binary"
 
