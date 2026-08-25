@@ -19,6 +19,7 @@ amnezia_codex_cli/
 ├── amnezia_codex_cli_ubuntu/
 │   ├── README.md
 │   ├── install.sh
+│   ├── reinstall.sh
 │   ├── verify.sh
 │   └── uninstall.sh
 └── amnezia_codex_cli_centos_bx/
@@ -35,6 +36,7 @@ amnezia_codex_cli/
 | `README.md` | в корне | общая структура и выбор комплекта |
 | `README.md` | в папке ОС | полная пошаговая установка для этой ОС |
 | `install.sh` | в папке ОС | установка namespace, службы и обёртки `codex` |
+| `reinstall.sh` | Ubuntu | восстановимая чистая переустановка всего стека |
 | `verify.sh` | в папке ОС | безопасная проверка службы, маршрутов, DNS и OpenAI |
 | `uninstall.sh` | в папке ОС | удаление namespace и службы |
 | `.gitignore` | только в корне | запрещает коммитить `.conf`, ключи и резервные копии |
@@ -77,8 +79,8 @@ scp "C:\path\outside\repo\amnezia_for_awg.conf" root@SERVER_IP:/root/
 
 ```bash
 cd /root/amnezia_codex_cli_ubuntu
-chmod 755 install.sh verify.sh uninstall.sh
-bash -n install.sh verify.sh uninstall.sh
+chmod 755 install.sh reinstall.sh verify.sh uninstall.sh
+bash -n install.sh reinstall.sh verify.sh uninstall.sh
 ./install.sh /root/amnezia_for_awg.conf
 ./verify.sh
 ```

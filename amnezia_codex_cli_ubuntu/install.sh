@@ -109,7 +109,7 @@ install_amneziawg_from_source() {
     apt-get update
     apt-get install -y \
         build-essential git pkg-config libmnl-dev libelf-dev \
-        "linux-headers-$(uname -r)" dkms iproute2 curl ca-certificates
+        "linux-headers-$(uname -r)" dkms iproute2 curl ca-certificates bubblewrap
 
     build_dir=$(mktemp -d /tmp/amneziawg-build.XXXXXX)
     trap cleanup_source_build RETURN
@@ -137,7 +137,7 @@ if [[ $SKIP_PACKAGES -eq 0 ]]; then
             apt-get update
             apt-get install -y \
                 software-properties-common python3-launchpadlib gnupg2 \
-                "linux-headers-$(uname -r)" dkms iproute2 curl ca-certificates
+                "linux-headers-$(uname -r)" dkms iproute2 curl ca-certificates bubblewrap
             add-apt-repository -y ppa:amnezia/ppa
             apt-get update
             apt-get install -y amneziawg
@@ -153,6 +153,7 @@ command -v ip >/dev/null || die "iproute is not installed"
 command -v awg >/dev/null || die "awg is not installed"
 command -v awg-quick >/dev/null || die "awg-quick is not installed"
 command -v curl >/dev/null || die "curl is not installed"
+command -v bwrap >/dev/null || die "bubblewrap is not installed"
 
 modprobe amneziawg
 
@@ -322,6 +323,8 @@ if [[ ! -x "$CODEX_INSTALL_DIR/codex" ]]; then
     echo "Installing the managed Codex CLI copy through the AmneziaWG namespace."
     install -d -m 755 "$CODEX_INSTALL_DIR"
     ip netns exec "$NS" env \
+        -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u NO_PROXY \
+        -u http_proxy -u https_proxy -u all_proxy -u no_proxy \
         HOME=/root \
         CODEX_HOME=/root/.codex \
         CODEX_INSTALL_DIR="$CODEX_INSTALL_DIR" \
@@ -363,7 +366,10 @@ if ! ip netns exec "$NS" awg show awg-codex >/dev/null 2>&1; then
     exit 1
 fi
 
-exec ip netns exec "$NS" "$REAL_CODEX" "$@"
+exec ip netns exec "$NS" env \
+    -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u NO_PROXY \
+    -u http_proxy -u https_proxy -u all_proxy -u no_proxy \
+    "$REAL_CODEX" "$@"
 SCRIPT
 sed -i "s|__REAL_CODEX__|$REAL_CODEX|" /usr/local/bin/codex
 chmod 755 /usr/local/bin/codex

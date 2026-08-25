@@ -30,6 +30,7 @@ Ubuntu продолжают использовать основной маршр
 /root/amnezia_codex_cli_ubuntu/
 ├── README.md
 ├── install.sh
+├── reinstall.sh
 ├── verify.sh
 └── uninstall.sh
 ```
@@ -115,8 +116,8 @@ scp C:\path\outside\repo\amnezia_for_awg.conf root@SERVER_IP:/root/
 ```bash
 cd /root/amnezia_codex_cli_ubuntu
 ls -la
-chmod 755 install.sh verify.sh uninstall.sh
-bash -n install.sh verify.sh uninstall.sh
+chmod 755 install.sh reinstall.sh verify.sh uninstall.sh
+bash -n install.sh reinstall.sh verify.sh uninstall.sh
 ```
 
 `bash -n` ничего не устанавливает; он только проверяет синтаксис. Если вывода нет,
@@ -178,6 +179,25 @@ type -a codex
 
 Обновлённый установщик удаляет созданный официальным установщиком блок PATH из
 профиля root, поэтому в новых SSH-сессиях исправление сохраняется автоматически.
+
+Установщик также ставит системный `bubblewrap`, требуемый Codex на Linux, и
+удаляет переменные HTTP/HTTPS/ALL proxy перед запуском CLI. Поэтому основной
+Codex и его MCP-клиенты используют один namespace `codexvpn`, а не IP хоста.
+
+## Чистая переустановка
+
+Завершите все процессы Codex, затем выполните:
+
+```bash
+cd /root/amnezia_codex_cli_ubuntu
+chmod 755 reinstall.sh
+./reinstall.sh /root/amnezia_for_awg.conf
+```
+
+Скрипт сохраняет старые `/root/.codex` и `/opt/openai-codex` в каталоге
+`/root/amnezia-codex-backup-YYYYMMDD-HHMMSS`, полностью пересоздаёт управляемую
+конфигурацию и в конце запускает `verify.sh`. После успешной проверки потребуется
+повторный вход `codex login --device-auth`.
 
 Дополнительные команды:
 

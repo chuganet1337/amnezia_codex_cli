@@ -98,6 +98,12 @@ else
     fail "unexpected Codex command: ${CODEX_PATH:-not found}; run: export PATH=/usr/local/bin:\$PATH; hash -r"
 fi
 
+if command -v bwrap >/dev/null 2>&1; then
+    pass "system bubblewrap is installed"
+else
+    fail "bubblewrap is missing; run: dnf install -y bubblewrap"
+fi
+
 echo
 ip netns exec "$NS" awg show "$IFACE"
 exit "$FAILED"
