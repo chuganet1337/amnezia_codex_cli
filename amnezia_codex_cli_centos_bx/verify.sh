@@ -56,8 +56,16 @@ fi
 HOST_IP=$(curl -4 -fsS --max-time 15 https://api.ipify.org 2>/dev/null || true)
 VPN_IP=$(ip netns exec "$NS" curl -4 -fsS --max-time 15 https://api.ipify.org 2>/dev/null || true)
 
-[[ -n "$HOST_IP" ]] && pass "host exit IP: $HOST_IP" || fail "cannot determine host exit IP"
-[[ -n "$VPN_IP" ]] && pass "Codex exit IP: $VPN_IP" || fail "cannot determine Codex exit IP"
+if [[ -n "$HOST_IP" ]]; then
+    pass "host exit IP: $HOST_IP"
+else
+    fail "cannot determine host exit IP"
+fi
+if [[ -n "$VPN_IP" ]]; then
+    pass "Codex exit IP: $VPN_IP"
+else
+    fail "cannot determine Codex exit IP"
+fi
 
 if [[ -n "$HOST_IP" && -n "$VPN_IP" && "$HOST_IP" != "$VPN_IP" ]]; then
     pass "host and Codex use different exits"
@@ -77,8 +85,11 @@ TRACE=$(ip netns exec "$NS" curl -4 -fsS --max-time 15 \
     https://auth.openai.com/cdn-cgi/trace 2>/dev/null || true)
 TRACE_LOC=$(printf '%s\n' "$TRACE" | sed -n 's/^loc=//p')
 TRACE_COLO=$(printf '%s\n' "$TRACE" | sed -n 's/^colo=//p')
-[[ -n "$TRACE_LOC" ]] && pass "Cloudflare location: $TRACE_LOC/$TRACE_COLO" || \
+if [[ -n "$TRACE_LOC" ]]; then
+    pass "Cloudflare location: $TRACE_LOC/$TRACE_COLO"
+else
     fail "Cloudflare trace is unavailable"
+fi
 
 CODEX_PATH=$(command -v codex 2>/dev/null || true)
 if [[ "$CODEX_PATH" == "/usr/local/bin/codex" ]]; then

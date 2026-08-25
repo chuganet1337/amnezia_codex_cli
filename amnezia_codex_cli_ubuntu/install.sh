@@ -337,7 +337,7 @@ if [[ -z "$REAL_CODEX" ]]; then
         CODEX_HOME=/root/.codex \
         CODEX_INSTALL_DIR="$CODEX_INSTALL_DIR" \
         CODEX_NON_INTERACTIVE=1 \
-        sh -c 'curl -fsSL --max-time 60 "$1" | sh' sh "$CODEX_INSTALLER_URL"
+        sh -c "curl -fsSL --max-time 60 '$CODEX_INSTALLER_URL' | sh"
     REAL_CODEX=$(find_real_codex || true)
 fi
 [[ -n "$REAL_CODEX" && -x "$REAL_CODEX" ]] || \
