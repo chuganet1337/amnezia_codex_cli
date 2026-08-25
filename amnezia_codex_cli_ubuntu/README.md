@@ -1,19 +1,28 @@
 # Codex CLI через AmneziaWG на Ubuntu
 
-Комплект запускает Codex CLI и все его дочерние команды в отдельном network
-namespace `codexvpn`. У обычных процессов Ubuntu маршрут не меняется. Если
-AmneziaWG недоступен, обёртка отказывается запускать Codex.
+Комплект сначала устанавливает и запускает AmneziaWG с профилем для OpenAI,
+затем через поднятый VPN устанавливает Codex CLI. Codex и все его дочерние
+команды работают в отдельном network namespace `codexvpn`; обычные процессы
+Ubuntu продолжают использовать основной маршрут. Если VPN недоступен, обёртка
+не запускает Codex.
+
+Порядок всегда такой:
+
+1. AmneziaWG.
+2. Профиль `/root/amnezia_for_awg.conf` и проверка VPN-IP.
+3. Установка Codex через этот VPN.
+4. Защищённая команда `codex` и итоговая проверка.
 
 ## Поддерживаемые системы
 
 - Ubuntu Server 22.04 LTS `jammy`, amd64.
 - Ubuntu Server 24.04 LTS `noble`, amd64 — рекомендуемый вариант.
+- Ubuntu Server 26.04 LTS `resolute`, amd64.
 
-Ubuntu 26.04 `resolute` пока нельзя устанавливать через PPA: в репозитории
-`ppa:amnezia/ppa` отсутствует серия `resolute`. Установщик проверяет версию до
-изменения APT и завершится с понятной ошибкой. На 26.04 допускается только режим
-`--skip-packages`, если модуль `amneziawg` и команды `awg`/`awg-quick` уже
-установлены и проверены вручную.
+На Ubuntu 22.04/24.04 AmneziaWG устанавливается из официального PPA. Для Ubuntu
+26.04 серии `resolute` в PPA нет, поэтому установщик автоматически собирает
+модуль и утилиты из закреплённых ревизий официальных репозиториев Amnezia. Уже
+добавленный нерабочий PPA `resolute` отключается с сохранением исходного файла.
 
 ## Какие файлы должны быть в папке
 
@@ -33,48 +42,7 @@ Ubuntu 26.04 `resolute` пока нельзя устанавливать чер�
 
 Не кладите `.conf` в Git-репозиторий.
 
-## Шаг 1. Удалить сломанный PPA на Ubuntu 26.04
-
-Этот шаг нужен только если `apt update` уже показывает:
-
-```text
-The repository 'https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu resolute Release' does not have a Release file
-```
-
-Посмотрите добавленные записи:
-
-```bash
-grep -RIl 'ppa.launchpadcontent.net/amnezia/ppa' \
-  /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null
-```
-
-Попробуйте штатное удаление:
-
-```bash
-add-apt-repository --remove -y ppa:amnezia/ppa
-apt update
-```
-
-Если запись осталась, проверьте точное имя файла:
-
-```bash
-ls -l /etc/apt/sources.list.d/*amnezia* 2>/dev/null
-```
-
-На `resolute` обычно это один из файлов ниже. Удаляйте только существующий файл с
-репозиторием Amnezia:
-
-```bash
-rm -f /etc/apt/sources.list.d/amnezia-ubuntu-ppa-resolute.sources
-rm -f /etc/apt/sources.list.d/amnezia-ubuntu-ppa-resolute.list
-apt update
-```
-
-После восстановления APT рекомендуется установить Ubuntu Server 24.04 LTS и
-продолжить со следующего шага. Подмена `resolute` на `noble` в источниках APT в
-этом проекте намеренно не используется.
-
-## Шаг 2. Проверить сервер
+## Шаг 1. Проверить сервер
 
 Выполните от `root`:
 
@@ -83,12 +51,25 @@ sudo -i
 cat /etc/os-release
 dpkg --print-architecture
 uname -r
-command -v codex
-codex --version
 ```
 
-Ожидается Ubuntu 22.04/24.04, архитектура `amd64` и найденная команда `codex`.
-Codex CLI должен быть установлен до запуска `install.sh`.
+Ожидается Ubuntu 22.04, 24.04 или 26.04 и архитектура `amd64`. Codex заранее
+устанавливать не нужно: если он не найден, скрипт установит официальный
+standalone-вариант только после запуска VPN.
+
+## Шаг 2. Если ранее добавляли нерабочий PPA
+
+На Ubuntu 26.04 установщик сам отключит файлы в `/etc/apt/sources.list.d`,
+содержащие `ppa.launchpadcontent.net/amnezia/ppa`, переименовав их с суффиксом
+`.disabled-by-amnezia-codex`. Активные строки в `/etc/apt/sources.list` будут
+закомментированы после создания резервной копии.
+
+До запуска можно посмотреть такие записи:
+
+```bash
+grep -RIl 'ppa.launchpadcontent.net/amnezia/ppa' \
+  /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null
+```
 
 ## Шаг 3. Подготовить AmneziaWG-профиль
 
@@ -148,16 +129,15 @@ bash -n install.sh verify.sh uninstall.sh
 
 Скрипт последовательно:
 
-1. Проверяет ОС, архитектуру, Codex CLI и обязательные поля AWG-профиля.
-2. Устанавливает заголовки текущего ядра, DKMS, `iproute2`, `curl` и AmneziaWG.
-3. Проверяет загрузку модуля временным AWG-интерфейсом.
+1. Проверяет ОС, архитектуру и обязательные поля AWG-профиля.
+2. Устанавливает AmneziaWG из PPA либо собирает его из официальных исходников.
+3. Проверяет модуль временным AWG-интерфейсом.
 4. Копирует профиль в `/etc/amnezia-codex/awg0.conf` с правами `600`.
-5. Сохраняет фактический путь Codex CLI в
-   `/etc/amnezia-codex/real-codex-path`.
-6. Создаёт namespace `codexvpn`, интерфейс `awg-codex` и отдельный DNS.
-7. Создаёт и запускает `codex-vpn.service`.
-8. Создаёт `/usr/local/bin/codex`, запускающий реальный CLI внутри namespace.
-9. Проверяет, что через VPN получается публичный IPv4-адрес.
+5. Создаёт namespace `codexvpn`, интерфейс `awg-codex` и отдельный DNS.
+6. Запускает `codex-vpn.service` и проверяет публичный IPv4 через VPN.
+7. Если Codex отсутствует, запускает официальный установщик внутри `codexvpn`.
+8. Сохраняет путь реального CLI в `/etc/amnezia-codex/real-codex-path`.
+9. Создаёт fail-closed обёртку `/usr/local/bin/codex`.
 
 Если AmneziaWG уже установлен и команды `awg`, `awg-quick` работают:
 
@@ -165,8 +145,9 @@ bash -n install.sh verify.sh uninstall.sh
 ./install.sh --skip-packages /root/amnezia_for_awg.conf
 ```
 
-Не используйте `--skip-packages` только для обхода ошибки PPA: этот режим требует
-заранее установленного и загружаемого модуля `amneziawg`.
+Режим `--skip-packages` требует заранее установленных и работающих команд
+`awg`, `awg-quick` и модуля `amneziawg`. Для Ubuntu 26.04 обходить PPA этим
+параметром больше не требуется.
 
 ## Шаг 7. Проверить результат
 
@@ -232,11 +213,16 @@ cd /root/amnezia_codex_cli_ubuntu
 
 ## Обновление Codex CLI
 
-После обновления CLI повторно запустите установщик, чтобы сохранить новый реальный
-путь и пересоздать обёртку:
+Codex, установленный этим проектом, обновляйте через тот же VPN и в тот же
+каталог, затем повторно запустите установщик:
 
 ```bash
-npm install -g @openai/codex@latest
+ip netns exec codexvpn env \
+  HOME=/root \
+  CODEX_HOME=/root/.codex \
+  CODEX_INSTALL_DIR=/opt/openai-codex/bin \
+  CODEX_NON_INTERACTIVE=1 \
+  sh -c 'curl -fsSL https://chatgpt.com/codex/install.sh | sh'
 hash -r
 ./install.sh --skip-packages /root/amnezia_for_awg.conf
 ./verify.sh

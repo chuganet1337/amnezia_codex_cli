@@ -12,6 +12,8 @@ CONFIG_DST="${CONFIG_DIR}/awg0.conf"
 NETNS_ETC="/etc/netns/${NS}"
 REAL_CODEX=""
 SKIP_PACKAGES=0
+CODEX_INSTALLER_URL="https://chatgpt.com/codex/install.sh"
+CODEX_INSTALL_DIR="/opt/openai-codex/bin"
 
 die() {
     echo "ERROR: $*" >&2
@@ -42,19 +44,6 @@ fi
 SOURCE_CONFIG=$1
 [[ -f "$SOURCE_CONFIG" ]] || die "configuration file not found: $SOURCE_CONFIG"
 
-CODEX_COMMAND=$(command -v codex 2>/dev/null || true)
-[[ -n "$CODEX_COMMAND" ]] || die "Codex CLI was not found in PATH"
-if [[ "$CODEX_COMMAND" == "/usr/local/bin/codex" ]] && \
-   grep -q 'Managed by amnezia-codex-cli' "$CODEX_COMMAND" 2>/dev/null; then
-    if [[ -s "${CONFIG_DIR}/real-codex-path" ]]; then
-        CODEX_COMMAND=$(head -n1 "${CONFIG_DIR}/real-codex-path")
-    else
-        die "the protected wrapper exists, but the saved real Codex path is missing"
-    fi
-fi
-REAL_CODEX=$(readlink -f "$CODEX_COMMAND")
-[[ -x "$REAL_CODEX" ]] || die "Codex CLI target is not executable: $REAL_CODEX"
-
 grep -qE '^[[:space:]]*\[Interface\][[:space:]]*$' "$SOURCE_CONFIG" || die "missing [Interface] section"
 grep -qE '^[[:space:]]*PrivateKey[[:space:]]*=' "$SOURCE_CONFIG" || die "missing PrivateKey"
 grep -qE '^[[:space:]]*Address[[:space:]]*=' "$SOURCE_CONFIG" || die "missing Address"
@@ -73,7 +62,7 @@ if [[ $SKIP_PACKAGES -eq 0 ]]; then
             die "matching kernel-devel is unavailable; do not upgrade/reboot automatically"
     fi
 
-    dnf install -y kernel-headers dkms
+    dnf install -y kernel-headers dkms iproute curl ca-certificates
     dnf copr enable -y amneziavpn/amneziawg
     dnf install -y amneziawg-dkms amneziawg-tools
 fi
@@ -98,8 +87,6 @@ fi
 
 install -d -m 700 "$CONFIG_DIR"
 install -d -m 755 "$NETNS_ETC"
-printf '%s\n' "$REAL_CODEX" > "${CONFIG_DIR}/real-codex-path"
-chmod 600 "${CONFIG_DIR}/real-codex-path"
 
 if [[ -f "$CONFIG_DST" ]] && ! cmp -s "$SOURCE_CONFIG" "$CONFIG_DST"; then
     BACKUP="${CONFIG_DST}.backup.$(date +%Y%m%d-%H%M%S)"
@@ -238,6 +225,58 @@ TimeoutStopSec=15
 WantedBy=multi-user.target
 UNIT
 
+systemctl stop "$SERVICE" 2>/dev/null || true
+if ip netns list | awk '{print $1}' | grep -Fxq "$NS"; then
+    ip netns delete "$NS"
+fi
+systemctl daemon-reload
+systemctl enable --now "$SERVICE"
+
+VPN_IP=$(ip netns exec "$NS" curl -4 -fsS --max-time 20 https://api.ipify.org || true)
+[[ -n "$VPN_IP" ]] || die "AmneziaWG started, but the VPN public-IP test failed; Codex was not installed"
+echo "AmneziaWG is active. VPN exit IP: $VPN_IP"
+
+find_real_codex() {
+    local candidate current
+
+    current=$(command -v codex 2>/dev/null || true)
+    if [[ "$current" == "/usr/local/bin/codex" ]] && \
+       grep -q 'Managed by amnezia-codex-cli' "$current" 2>/dev/null; then
+        current=""
+        if [[ -s "${CONFIG_DIR}/real-codex-path" ]]; then
+            candidate=$(head -n1 "${CONFIG_DIR}/real-codex-path")
+            [[ -x "$candidate" ]] && current="$candidate"
+        fi
+    fi
+
+    for candidate in "$current" "$CODEX_INSTALL_DIR/codex" /root/.local/bin/codex; do
+        if [[ -n "$candidate" && -x "$candidate" ]] && \
+           ! grep -q 'Managed by amnezia-codex-cli' "$candidate" 2>/dev/null; then
+            readlink -f "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+REAL_CODEX=$(find_real_codex || true)
+if [[ -z "$REAL_CODEX" ]]; then
+    echo "Codex CLI is not installed. Installing it through the AmneziaWG namespace."
+    install -d -m 755 "$CODEX_INSTALL_DIR"
+    ip netns exec "$NS" env \
+        HOME=/root \
+        CODEX_HOME=/root/.codex \
+        CODEX_INSTALL_DIR="$CODEX_INSTALL_DIR" \
+        CODEX_NON_INTERACTIVE=1 \
+        sh -c 'curl -fsSL --max-time 60 "$1" | sh' sh "$CODEX_INSTALLER_URL"
+    REAL_CODEX=$(find_real_codex || true)
+fi
+[[ -n "$REAL_CODEX" && -x "$REAL_CODEX" ]] || \
+    die "Codex installation finished without an executable Codex binary"
+
+printf '%s\n' "$REAL_CODEX" > "${CONFIG_DIR}/real-codex-path"
+chmod 600 "${CONFIG_DIR}/real-codex-path"
+
 if [[ -e /usr/local/bin/codex ]] && ! grep -q 'Managed by amnezia-codex-cli' /usr/local/bin/codex 2>/dev/null; then
     WRAPPER_BACKUP="/usr/local/bin/codex.pre-amnezia.$(date +%Y%m%d-%H%M%S)"
     cp -p -- /usr/local/bin/codex "$WRAPPER_BACKUP"
@@ -267,17 +306,8 @@ SCRIPT
 sed -i "s|__REAL_CODEX__|$REAL_CODEX|" /usr/local/bin/codex
 chmod 755 /usr/local/bin/codex
 
-systemctl stop "$SERVICE" 2>/dev/null || true
-if ip netns list | awk '{print $1}' | grep -Fxq "$NS"; then
-    ip netns delete "$NS"
-fi
-systemctl daemon-reload
-systemctl enable --now "$SERVICE"
-
-VPN_IP=$(ip netns exec "$NS" curl -4 -fsS --max-time 20 https://api.ipify.org || true)
-[[ -n "$VPN_IP" ]] || die "VPN started, but the public-IP connectivity test failed"
-
 echo
 echo "Installation complete. VPN exit IP: $VPN_IP"
+echo "Codex CLI path: $REAL_CODEX"
 echo "Open a new shell or run: hash -r"
 echo "For SSH/headless authentication run: codex login --device-auth"

@@ -1,9 +1,10 @@
 # Codex CLI через AmneziaWG на CentOS/BitrixVM 9
 
 Комплект предназначен для CentOS Stream 9 и RHEL 9 совместимых систем, включая
-сервер BitrixVM на совместимой базе. Только Codex CLI и запущенные им дочерние
-процессы идут через AmneziaWG. Сеть портала Bitrix24, nginx, Apache, MySQL и
-остальных служб не переключается в VPN.
+сервер BitrixVM на совместимой базе. Он сначала устанавливает и запускает
+AmneziaWG с профилем OpenAI, затем через VPN устанавливает Codex. Только Codex
+CLI и запущенные им дочерние процессы идут через AmneziaWG. Сеть портала
+Bitrix24, nginx, Apache, MySQL и остальных служб не переключается в VPN.
 
 ## Какие файлы должны быть в папке
 
@@ -21,20 +22,18 @@
 /root/amnezia_for_awg.conf
 ```
 
-## Шаг 1. Проверить ОС, ядро и Codex
+## Шаг 1. Проверить ОС и ядро
 
 ```bash
 sudo -i
 cat /etc/os-release
 uname -r
 uname -m
-command -v codex
-codex --version
 ```
 
-Требуется major-версия ОС 9, RHEL/CentOS совместимая система, `x86_64` и Codex CLI
-в `PATH`. Установщик сам определяет фактический путь Codex и больше не требует,
-чтобы бинарник обязательно находился в `/usr/bin/codex`.
+Требуется major-версия ОС 9, RHEL/CentOS совместимая система и `x86_64`. Codex
+заранее устанавливать не нужно: если он отсутствует, скрипт установит
+официальный standalone-вариант только после успешного запуска VPN.
 
 Проверьте наличие заголовков точно для запущенного ядра:
 
@@ -102,16 +101,14 @@ bash -n install.sh verify.sh uninstall.sh
 
 Установщик:
 
-1. Проверяет ОС, Codex CLI и поля AWG-профиля.
+1. Проверяет ОС и поля AWG-профиля.
 2. Устанавливает `dnf-plugins-core`, совпадающий `kernel-devel`, DKMS и AWG-пакеты.
-3. Подключает COPR `amneziavpn/amneziawg`.
-4. Проверяет модуль `amneziawg` временным интерфейсом.
-5. Сохраняет профиль в `/etc/amnezia-codex/awg0.conf` с правами `600`.
-6. Сохраняет реальный путь Codex в `/etc/amnezia-codex/real-codex-path`.
-7. Создаёт namespace `codexvpn`, интерфейс `awg-codex` и отдельный DNS.
-8. Устанавливает `codex-vpn.service` и fail-closed обёртку
-   `/usr/local/bin/codex`.
-9. Проверяет получение публичного IPv4 через VPN.
+3. Подключает COPR `amneziavpn/amneziawg` и проверяет модуль.
+4. Сохраняет профиль в `/etc/amnezia-codex/awg0.conf` с правами `600`.
+5. Создаёт namespace `codexvpn`, интерфейс `awg-codex` и отдельный DNS.
+6. Запускает `codex-vpn.service` и проверяет публичный IPv4 через VPN.
+7. Если Codex отсутствует, запускает официальный установщик внутри `codexvpn`.
+8. Сохраняет путь CLI и создаёт fail-closed обёртку `/usr/local/bin/codex`.
 
 Если пакеты и модуль уже установлены:
 
@@ -174,7 +171,12 @@ cd /root/amnezia_codex_cli_centos_bx
 ## Обновление Codex CLI
 
 ```bash
-npm install -g @openai/codex@latest
+ip netns exec codexvpn env \
+  HOME=/root \
+  CODEX_HOME=/root/.codex \
+  CODEX_INSTALL_DIR=/opt/openai-codex/bin \
+  CODEX_NON_INTERACTIVE=1 \
+  sh -c 'curl -fsSL https://chatgpt.com/codex/install.sh | sh'
 hash -r
 ./install.sh --skip-packages /root/amnezia_for_awg.conf
 ./verify.sh

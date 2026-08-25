@@ -12,6 +12,12 @@ CONFIG_DST="${CONFIG_DIR}/awg0.conf"
 NETNS_ETC="/etc/netns/${NS}"
 REAL_CODEX=""
 SKIP_PACKAGES=0
+CODEX_INSTALLER_URL="https://chatgpt.com/codex/install.sh"
+CODEX_INSTALL_DIR="/opt/openai-codex/bin"
+AWG_MODULE_REPO="https://github.com/amnezia-vpn/amneziawg-linux-kernel-module.git"
+AWG_MODULE_REF="46803204e7ec3b068199cd671143bec661d3fe21"
+AWG_TOOLS_REPO="https://github.com/amnezia-vpn/amneziawg-tools.git"
+AWG_TOOLS_REF="ee0f0a9aa34ff0a0da4b3433b9512781cfe02843"
 
 die() {
     echo "ERROR: $*" >&2
@@ -41,19 +47,6 @@ fi
 SOURCE_CONFIG=$1
 [[ -f "$SOURCE_CONFIG" ]] || die "configuration file not found: $SOURCE_CONFIG"
 
-CODEX_COMMAND=$(command -v codex 2>/dev/null || true)
-[[ -n "$CODEX_COMMAND" ]] || die "Codex CLI was not found in PATH"
-if [[ "$CODEX_COMMAND" == "/usr/local/bin/codex" ]] && \
-   grep -q 'Managed by amnezia-codex-cli' "$CODEX_COMMAND" 2>/dev/null; then
-    if [[ -s "${CONFIG_DIR}/real-codex-path" ]]; then
-        CODEX_COMMAND=$(head -n1 "${CONFIG_DIR}/real-codex-path")
-    else
-        die "the protected wrapper exists, but the saved real Codex path is missing"
-    fi
-fi
-REAL_CODEX=$(readlink -f "$CODEX_COMMAND")
-[[ -x "$REAL_CODEX" ]] || die "Codex CLI target is not executable: $REAL_CODEX"
-
 grep -qE '^[[:space:]]*\[Interface\][[:space:]]*$' "$SOURCE_CONFIG" || die "missing [Interface] section"
 grep -qE '^[[:space:]]*PrivateKey[[:space:]]*=' "$SOURCE_CONFIG" || die "missing PrivateKey"
 grep -qE '^[[:space:]]*Address[[:space:]]*=' "$SOURCE_CONFIG" || die "missing Address"
@@ -64,22 +57,83 @@ grep -qE '^[[:space:]]*AllowedIPs[[:space:]]*=.*0\.0\.0\.0/0' "$SOURCE_CONFIG" |
 grep -qE '^[[:space:]]*Endpoint[[:space:]]*=[[:space:]]*[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+[[:space:]]*$' \
     "$SOURCE_CONFIG" || die "Endpoint must use a numeric IPv4 address and port, not a hostname"
 
-if [[ $SKIP_PACKAGES -eq 0 ]]; then
-    case "$UBUNTU_CODENAME" in
-        jammy|noble) ;;
-        *)
-            die "Amnezia PPA packages are supported here only for Ubuntu 22.04 (jammy) and 24.04 (noble); detected: ${PRETTY_NAME:-$UBUNTU_CODENAME}. Remove any broken Amnezia PPA entry, use Ubuntu 24.04 LTS, or install awg/awg-quick and the amneziawg module manually and rerun with --skip-packages"
-            ;;
-    esac
+disable_unsupported_amnezia_ppa() {
+    local source_file backup
 
+    shopt -s nullglob
+    for source_file in /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+        [[ -f "$source_file" ]] || continue
+        if grep -q 'ppa.launchpadcontent.net/amnezia/ppa' "$source_file"; then
+            backup="${source_file}.disabled-by-amnezia-codex"
+            mv -f -- "$source_file" "$backup"
+            echo "Disabled unsupported Amnezia PPA: $source_file -> $backup"
+        fi
+    done
+    shopt -u nullglob
+
+    if [[ -f /etc/apt/sources.list ]] && \
+       grep -qE '^[[:space:]]*deb(-src)?[[:space:]].*ppa.launchpadcontent.net/amnezia/ppa' \
+           /etc/apt/sources.list; then
+        backup="/etc/apt/sources.list.backup-amnezia-codex-$(date +%Y%m%d-%H%M%S)"
+        cp -p -- /etc/apt/sources.list "$backup"
+        sed -i '\|ppa.launchpadcontent.net/amnezia/ppa|s|^|# disabled-by-amnezia-codex: |' \
+            /etc/apt/sources.list
+        echo "Disabled unsupported Amnezia PPA entries in /etc/apt/sources.list; backup: $backup"
+    fi
+}
+
+install_amneziawg_from_source() {
+    local build_dir jobs
+
+    cleanup_source_build() {
+        if [[ -n ${build_dir:-} && "$build_dir" == /tmp/amneziawg-build.* ]]; then
+            rm -rf -- "$build_dir"
+        fi
+    }
+
+    disable_unsupported_amnezia_ppa
     export DEBIAN_FRONTEND=noninteractive
     apt-get update
     apt-get install -y \
-        software-properties-common python3-launchpadlib gnupg2 \
+        build-essential git pkg-config libmnl-dev libelf-dev \
         "linux-headers-$(uname -r)" dkms iproute2 curl ca-certificates
-    add-apt-repository -y ppa:amnezia/ppa
-    apt-get update
-    apt-get install -y amneziawg
+
+    build_dir=$(mktemp -d /tmp/amneziawg-build.XXXXXX)
+    trap cleanup_source_build RETURN
+    jobs=$(nproc 2>/dev/null || echo 1)
+
+    git clone --filter=blob:none "$AWG_MODULE_REPO" "$build_dir/module"
+    git -C "$build_dir/module" checkout --detach "$AWG_MODULE_REF"
+    make -C "$build_dir/module/src" -j"$jobs"
+    make -C "$build_dir/module/src" install
+
+    git clone --filter=blob:none "$AWG_TOOLS_REPO" "$build_dir/tools"
+    git -C "$build_dir/tools" checkout --detach "$AWG_TOOLS_REF"
+    make -C "$build_dir/tools/src" -j"$jobs"
+    make -C "$build_dir/tools/src" install
+
+    cleanup_source_build
+    build_dir=""
+    trap - RETURN
+}
+
+if [[ $SKIP_PACKAGES -eq 0 ]]; then
+    case "$UBUNTU_CODENAME" in
+        jammy|noble)
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update
+            apt-get install -y \
+                software-properties-common python3-launchpadlib gnupg2 \
+                "linux-headers-$(uname -r)" dkms iproute2 curl ca-certificates
+            add-apt-repository -y ppa:amnezia/ppa
+            apt-get update
+            apt-get install -y amneziawg
+            ;;
+        *)
+            echo "No Amnezia PPA for ${PRETTY_NAME:-$UBUNTU_CODENAME}; building AmneziaWG from pinned official sources."
+            install_amneziawg_from_source
+            ;;
+    esac
 fi
 
 command -v ip >/dev/null || die "iproute is not installed"
@@ -102,8 +156,6 @@ fi
 
 install -d -m 700 "$CONFIG_DIR"
 install -d -m 755 "$NETNS_ETC"
-printf '%s\n' "$REAL_CODEX" > "${CONFIG_DIR}/real-codex-path"
-chmod 600 "${CONFIG_DIR}/real-codex-path"
 
 if [[ -f "$CONFIG_DST" ]] && ! cmp -s "$SOURCE_CONFIG" "$CONFIG_DST"; then
     BACKUP="${CONFIG_DST}.backup.$(date +%Y%m%d-%H%M%S)"
@@ -242,6 +294,58 @@ TimeoutStopSec=15
 WantedBy=multi-user.target
 UNIT
 
+systemctl stop "$SERVICE" 2>/dev/null || true
+if ip netns list | awk '{print $1}' | grep -Fxq "$NS"; then
+    ip netns delete "$NS"
+fi
+systemctl daemon-reload
+systemctl enable --now "$SERVICE"
+
+VPN_IP=$(ip netns exec "$NS" curl -4 -fsS --max-time 20 https://api.ipify.org || true)
+[[ -n "$VPN_IP" ]] || die "AmneziaWG started, but the VPN public-IP test failed; Codex was not installed"
+echo "AmneziaWG is active. VPN exit IP: $VPN_IP"
+
+find_real_codex() {
+    local candidate current
+
+    current=$(command -v codex 2>/dev/null || true)
+    if [[ "$current" == "/usr/local/bin/codex" ]] && \
+       grep -q 'Managed by amnezia-codex-cli' "$current" 2>/dev/null; then
+        current=""
+        if [[ -s "${CONFIG_DIR}/real-codex-path" ]]; then
+            candidate=$(head -n1 "${CONFIG_DIR}/real-codex-path")
+            [[ -x "$candidate" ]] && current="$candidate"
+        fi
+    fi
+
+    for candidate in "$current" "$CODEX_INSTALL_DIR/codex" /root/.local/bin/codex; do
+        if [[ -n "$candidate" && -x "$candidate" ]] && \
+           ! grep -q 'Managed by amnezia-codex-cli' "$candidate" 2>/dev/null; then
+            readlink -f "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+REAL_CODEX=$(find_real_codex || true)
+if [[ -z "$REAL_CODEX" ]]; then
+    echo "Codex CLI is not installed. Installing it through the AmneziaWG namespace."
+    install -d -m 755 "$CODEX_INSTALL_DIR"
+    ip netns exec "$NS" env \
+        HOME=/root \
+        CODEX_HOME=/root/.codex \
+        CODEX_INSTALL_DIR="$CODEX_INSTALL_DIR" \
+        CODEX_NON_INTERACTIVE=1 \
+        sh -c 'curl -fsSL --max-time 60 "$1" | sh' sh "$CODEX_INSTALLER_URL"
+    REAL_CODEX=$(find_real_codex || true)
+fi
+[[ -n "$REAL_CODEX" && -x "$REAL_CODEX" ]] || \
+    die "Codex installation finished without an executable Codex binary"
+
+printf '%s\n' "$REAL_CODEX" > "${CONFIG_DIR}/real-codex-path"
+chmod 600 "${CONFIG_DIR}/real-codex-path"
+
 if [[ -e /usr/local/bin/codex ]] && ! grep -q 'Managed by amnezia-codex-cli' /usr/local/bin/codex 2>/dev/null; then
     WRAPPER_BACKUP="/usr/local/bin/codex.pre-amnezia.$(date +%Y%m%d-%H%M%S)"
     cp -p -- /usr/local/bin/codex "$WRAPPER_BACKUP"
@@ -271,17 +375,8 @@ SCRIPT
 sed -i "s|__REAL_CODEX__|$REAL_CODEX|" /usr/local/bin/codex
 chmod 755 /usr/local/bin/codex
 
-systemctl stop "$SERVICE" 2>/dev/null || true
-if ip netns list | awk '{print $1}' | grep -Fxq "$NS"; then
-    ip netns delete "$NS"
-fi
-systemctl daemon-reload
-systemctl enable --now "$SERVICE"
-
-VPN_IP=$(ip netns exec "$NS" curl -4 -fsS --max-time 20 https://api.ipify.org || true)
-[[ -n "$VPN_IP" ]] || die "VPN started, but the public-IP connectivity test failed"
-
 echo
 echo "Installation complete. VPN exit IP: $VPN_IP"
+echo "Codex CLI path: $REAL_CODEX"
 echo "Open a new shell or run: hash -r"
 echo "For SSH/headless authentication run: codex login --device-auth"
