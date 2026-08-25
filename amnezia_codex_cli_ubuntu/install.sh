@@ -371,5 +371,5 @@ chmod 755 /usr/local/bin/codex
 echo
 echo "Installation complete. VPN exit IP: $VPN_IP"
 echo "Codex CLI path: $REAL_CODEX"
-echo 'For this shell run: export PATH="/usr/local/bin:$PATH"; hash -r'
+echo "For this shell run: export PATH=\"/usr/local/bin:\$PATH\"; hash -r"
 echo "For SSH/headless authentication run: codex login --device-auth"
