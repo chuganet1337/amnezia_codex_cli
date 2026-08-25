@@ -1,0 +1,9 @@
+# VPN profiles and authentication material must never be committed.
+*.conf
+*.vpn
+auth.json
+*.backup.*
+.env
+.env.*
+*.key
+*.pem
