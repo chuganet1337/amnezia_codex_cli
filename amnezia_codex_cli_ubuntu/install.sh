@@ -143,11 +143,11 @@ command -v curl >/dev/null || die "curl is not installed"
 
 modprobe amneziawg
 
-if ip link show awg-install-probe >/dev/null 2>&1; then
-    die "temporary interface awg-install-probe already exists"
+if ip link show awg-probe >/dev/null 2>&1; then
+    die "temporary interface awg-probe already exists"
 fi
-ip link add awg-install-probe type amneziawg
-ip link delete awg-install-probe
+ip link add awg-probe type amneziawg
+ip link delete awg-probe
 
 if ip netns list | awk '{print $1}' | grep -Fxq "$NS"; then
     ACTIVE_PIDS=$(ip netns pids "$NS" 2>/dev/null || true)
