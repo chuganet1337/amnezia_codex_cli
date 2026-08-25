@@ -95,7 +95,7 @@ CODEX_PATH=$(command -v codex 2>/dev/null || true)
 if [[ "$CODEX_PATH" == "/usr/local/bin/codex" ]]; then
     pass "the protected Codex wrapper is first in PATH"
 else
-    fail "unexpected Codex command: ${CODEX_PATH:-not found}"
+    fail "unexpected Codex command: ${CODEX_PATH:-not found}; run: export PATH=/usr/local/bin:\$PATH; hash -r"
 fi
 
 echo

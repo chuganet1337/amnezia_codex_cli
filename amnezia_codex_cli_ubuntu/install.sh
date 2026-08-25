@@ -29,6 +29,19 @@ usage() {
     exit 2
 }
 
+remove_direct_codex_path_blocks() {
+    local profile
+
+    for profile in /root/.bashrc /root/.bash_profile /root/.profile /root/.zshrc /root/.zprofile; do
+        [[ -f "$profile" ]] || continue
+        if grep -Fxq '# >>> Codex installer >>>' "$profile" && \
+           grep -Fxq '# <<< Codex installer <<<' "$profile"; then
+            sed -i '/^# >>> Codex installer >>>$/,/^# <<< Codex installer <<<$/{d;}' "$profile"
+            echo "Removed direct Codex PATH entry from $profile"
+        fi
+    done
+}
+
 [[ ${EUID} -eq 0 ]] || die "run this installer as root"
 
 [[ -r /etc/os-release ]] || die "cannot identify the operating system"
@@ -319,6 +332,10 @@ REAL_CODEX=$(readlink -f "$CODEX_INSTALL_DIR/codex" 2>/dev/null || true)
 [[ -n "$REAL_CODEX" && -x "$REAL_CODEX" ]] || \
     die "Codex installation finished without an executable Codex binary"
 
+# The official installer prepends CODEX_INSTALL_DIR to the shell PATH. Remove
+# that block so interactive shells cannot bypass the fail-closed VPN wrapper.
+remove_direct_codex_path_blocks
+
 printf '%s\n' "$REAL_CODEX" > "${CONFIG_DIR}/real-codex-path"
 chmod 600 "${CONFIG_DIR}/real-codex-path"
 
@@ -354,5 +371,5 @@ chmod 755 /usr/local/bin/codex
 echo
 echo "Installation complete. VPN exit IP: $VPN_IP"
 echo "Codex CLI path: $REAL_CODEX"
-echo "Open a new shell or run: hash -r"
+echo 'For this shell run: export PATH="/usr/local/bin:$PATH"; hash -r'
 echo "For SSH/headless authentication run: codex login --device-auth"
