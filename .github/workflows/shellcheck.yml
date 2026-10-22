@@ -13,7 +13,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Check Bash syntax
-        run: bash -n amnezia_codex_cli_ubuntu/*.sh amnezia_codex_cli_centos_bx/*.sh
+        run: |
+          for script in amnezia_codex_cli_ubuntu/*.sh amnezia_codex_cli_centos_bx/*.sh; do
+            bash -n "$script" || exit
+          done
+      - name: Test CentOS package fallback and Codex wrapper
+        run: python3 -m unittest discover -s tests -v
       - name: Install ShellCheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
       - name: Run ShellCheck

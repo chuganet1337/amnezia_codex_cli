@@ -42,8 +42,16 @@ Codex не используется.
 rpm -q "kernel-devel-$(uname -r)"
 ```
 
-Если пакет не найден, установщик попытается его установить. Он намеренно не
-обновляет ядро и не перезагружает сервер BitrixVM автоматически.
+Если пакет не установлен, установщик ищет точную версию в подключённых
+репозиториях. На CentOS Stream 9 с обычным ядром `*.el9.x86_64`, если эта версия
+уже отсутствует на зеркалах, он загружает подписанный RPM из официального
+CentOS Koji (`data/signed/8483c65d`). Проверяются имя, версия и архитектура RPM;
+DNF устанавливает его с `localpkg_gpgcheck=1`. Неподписанные сборки не используются.
+Для других RHEL-совместимых ОС этот запасной источник не применяется.
+
+Если подписанного пакета нет или проверка подписи не проходит, установка
+останавливается. Скрипт не обновляет ядро и не перезагружает сервер BitrixVM.
+DNF может обновить зависимости, включая `glibc`.
 
 ## Шаг 2. Подготовить AmneziaWG-профиль
 
@@ -89,7 +97,9 @@ scp C:\path\outside\repo\amnezia_for_awg.conf root@BITRIX_SERVER_IP:/root/
 cd /root/amnezia_codex_cli_centos_bx
 ls -la
 chmod 755 install.sh verify.sh uninstall.sh
-bash -n install.sh verify.sh uninstall.sh
+for script in install.sh verify.sh uninstall.sh; do
+  bash -n "$script" || break
+done
 ```
 
 Если `bash -n` не вывел ошибок, переходите к установке.
@@ -164,6 +174,22 @@ ip netns exec codexvpn curl -4 https://api.ipify.org
 codex login --device-auth
 codex login status
 codex exec "Ответь только словом OK"
+```
+
+Обёртка всегда передаёт `-c 'cli_auth_credentials_store="file"'` при запуске
+CLI, включая `login`, `login status` и интерактивный режим. Авторизация хранится
+в `${CODEX_HOME:-$HOME/.codex}/auth.json` и используется при следующих запусках.
+Это устраняет повторный экран входа, когда `login status` уже показывает
+`Logged in using ChatGPT`, но интерактивный запуск выбирает другое хранилище.
+Файл `auth.json` содержит токены: не публикуйте его и не добавляйте в Git.
+
+Для уже установленного комплекта закройте процессы Codex и повторно запустите
+обновлённый установщик; повторный вход при сохранённом `auth.json` не требуется:
+
+```bash
+./install.sh --skip-packages /root/amnezia_for_awg.conf && ./verify.sh
+codex login status
+codex
 ```
 
 ## Ежедневная работа

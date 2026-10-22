@@ -25,6 +25,41 @@ usage() {
     exit 2
 }
 
+install_matching_kernel_devel() (
+    # Keep the download and its cleanup trap local to this subshell.
+    local running_kernel package version release arch rpm_url download_dir
+    running_kernel=$(uname -r)
+    package="kernel-devel-${running_kernel}"
+    rpm -q "$package" >/dev/null 2>&1 && return 0
+
+    if dnf repoquery --available --qf '%{name}' "$package" | grep -Fxq kernel-devel; then
+        dnf install -y "$package" || die "cannot install $package from enabled repositories"
+    else
+        # CentOS Stream mirrors rotate out older builds. Use only the signed
+        # official CentOS build for the running kernel, never a newer devel RPM.
+        [[ ${ID:-} == centos && ${NAME:-} == "CentOS Stream" ]] || \
+            die "$package is unavailable; no CentOS fallback for this OS"
+        [[ $running_kernel =~ ^([0-9.]+)-([0-9]+\.el9)\.(x86_64)$ ]] || \
+            die "unsupported CentOS kernel for signed fallback: $running_kernel"
+        version=${BASH_REMATCH[1]}
+        release=${BASH_REMATCH[2]}
+        arch=${BASH_REMATCH[3]}
+        rpm_url="https://kojihub.stream.centos.org/kojifiles/packages/kernel/${version}/${release}/data/signed/8483c65d/${arch}/${package}.rpm"
+        download_dir=$(mktemp -d)
+        trap 'rm -rf -- "$download_dir"' EXIT
+        echo "$package is absent from repositories; fetching the signed CentOS build."
+        curl --fail --show-error --silent --location --proto '=https' --proto-redir '=https' \
+            --connect-timeout 15 --max-time 300 \
+            --output "$download_dir/$package.rpm" "$rpm_url" || \
+            die "signed $package is unavailable; kernel was not upgraded; do not reboot automatically"
+        [[ $(rpm -qp --qf '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}' "$download_dir/$package.rpm") == "$package" ]] || \
+            die "downloaded RPM does not match $package"
+        dnf --setopt=localpkg_gpgcheck=1 install -y "$download_dir/$package.rpm" || \
+            die "signed $package installation failed; signature checks remain enabled"
+    fi
+    rpm -q "$package" >/dev/null 2>&1 || die "$package was not installed"
+)
+
 remove_direct_codex_path_blocks() {
     local profile
 
@@ -68,12 +103,8 @@ grep -qE '^[[:space:]]*Endpoint[[:space:]]*=[[:space:]]*[0-9]+\.[0-9]+\.[0-9]+\.
     "$SOURCE_CONFIG" || die "Endpoint must use a numeric IPv4 address and port, not a hostname"
 
 if [[ $SKIP_PACKAGES -eq 0 ]]; then
-    dnf install -y dnf-plugins-core
-
-    if ! rpm -q "kernel-devel-$(uname -r)" >/dev/null 2>&1; then
-        dnf install -y "kernel-devel-$(uname -r)" || \
-            die "matching kernel-devel is unavailable; do not upgrade/reboot automatically"
-    fi
+    dnf install -y dnf-plugins-core curl ca-certificates
+    install_matching_kernel_devel
 
     dnf install -y kernel-headers dkms iproute curl ca-certificates bubblewrap
     dnf copr enable -y amneziavpn/amneziawg
@@ -300,7 +331,7 @@ fi
 exec ip netns exec "$NS" env \
     -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u NO_PROXY \
     -u http_proxy -u https_proxy -u all_proxy -u no_proxy \
-    "$REAL_CODEX" "$@"
+    "$REAL_CODEX" -c 'cli_auth_credentials_store="file"' "$@"
 SCRIPT
 sed -i "s|__REAL_CODEX__|$REAL_CODEX|" /usr/local/bin/codex
 chmod 755 /usr/local/bin/codex
